@@ -32,3 +32,15 @@ reason = "Outil en ligne de commande sans interface : le portfolio montre des so
 [[waive]]
 id = "QUA-05"
 reason = "Tauri n'est pas utilisé ; seule la version de Rust est pertinente (rust-toolchain.toml)"
+
+[[waive]]
+id = "QUA-06"
+reason = "Version 0.1.0 déclarée dans [workspace.package] du Cargo.toml racine (workspace virtuel) et commit tagué v0.1.0 ; zeaudit 0.2.0 ne lit que [package]"
+
+[[waive]]
+id = "QUA-02"
+reason = "Workspace virtuel : `cargo fmt --manifest-path Cargo.toml` ne trouve pas de cible ; `cargo fmt --all --check` passe (vérifié en CI) et clippy -D warnings ne signale rien"
+
+[[waive]]
+id = "CFG-03"
+reason = "Aucun fichier de configuration, donc pas d'emplacement par OS : options CLI et variables d'environnement uniquement (README, section Configuration)"
