@@ -91,7 +91,7 @@ impl Preset {
 }
 
 /// Loads every tensor of a Hugging Face checkpoint directory on the CPU.
-fn load_checkpoint(dir: &Path) -> Result<HashMap<String, Tensor>> {
+pub(crate) fn load_checkpoint(dir: &Path) -> Result<HashMap<String, Tensor>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {

@@ -1,4 +1,5 @@
 mod server;
+mod tts_server;
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -7,7 +8,9 @@ use std::time::Instant;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
 use malaga_core::convert::{convert, ConvertOptions, Preset};
-use malaga_core::{best_device, Device, GenOptions, Translator};
+use malaga_core::vits::{gguf_architecture, wav_bytes, VITS_ARCH};
+use malaga_core::vits_convert::{convert_vits, hf_model_type};
+use malaga_core::{best_device, Device, GenOptions, SynthOptions, Translator, Vits};
 
 #[derive(Parser)]
 #[command(name = "malaga", version, about = "FR/EN -> Malagasy translation with NLLB-200 on GGUF")]
@@ -18,19 +21,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Convert a Hugging Face NLLB checkpoint directory to GGUF.
+    /// Convert a Hugging Face checkpoint directory to GGUF: NLLB (translation)
+    /// or VITS / MMS-TTS (speech), detected from config.json.
     Convert {
-        /// Directory with config.json, tokenizer.json and the weights.
+        /// Directory with config.json, the tokenizer files and the weights.
         #[arg(long)]
         hf: PathBuf,
         #[arg(long, short)]
         out: PathBuf,
-        /// f32, f16, q8_0, q6_k, q5_k_m, q4_k_m
-        #[arg(long, default_value = "q8_0")]
-        preset: Preset,
-        /// Hugging Face repo id, stored in the GGUF metadata.
-        #[arg(long, default_value = "facebook/nllb-200-distilled-600M")]
-        name: String,
+        /// f32, f16, q8_0, q6_k, q5_k_m, q4_k_m (default q8_0; VITS: f32 or f16, default f16)
+        #[arg(long)]
+        preset: Option<Preset>,
+        /// Hugging Face repo id, stored in the GGUF metadata
+        /// (default facebook/nllb-200-distilled-600M, or facebook/mms-tts-<lang> for VITS).
+        #[arg(long)]
+        name: Option<String>,
         /// Vocabulary shortlist for a target language, built from a text corpus:
         /// `--shortlist mg=corpus.txt`. Speeds up GPU decoding to that language.
         #[arg(long, value_parser = parse_shortlist)]
@@ -56,6 +61,21 @@ enum Cmd {
         /// Text to translate (reads stdin when absent).
         text: Option<String>,
     },
+    /// Text to speech with a VITS / MMS-TTS GGUF (e.g. facebook/mms-tts-mlg).
+    Speak {
+        #[command(flatten)]
+        model: ModelArgs,
+        #[command(flatten)]
+        tts: TtsArgs,
+        /// Output WAV file.
+        #[arg(long, short, default_value = "out.wav")]
+        out: PathBuf,
+        /// Synthesize this many times and report latency / real-time factor.
+        #[arg(long, default_value_t = 1)]
+        iters: usize,
+        /// Text to speak (reads stdin when absent).
+        text: Option<String>,
+    },
     /// Measure latency / throughput.
     Bench {
         #[command(flatten)]
@@ -74,6 +94,9 @@ enum Cmd {
         model: ModelArgs,
         #[command(flatten)]
         gen: GenArgs,
+        /// Only used when the GGUF is a VITS (text-to-speech) model.
+        #[command(flatten)]
+        tts: TtsArgs,
         /// Model name reported by the API (defaults to the GGUF `general.name`).
         #[arg(long)]
         model_id: Option<String>,
@@ -127,6 +150,62 @@ impl ModelArgs {
         let t = Translator::load(&self.model, &device)?;
         tracing::info!("loaded {} on {device:?} in {:.2?}", t.name(), t0.elapsed());
         Ok(t)
+    }
+
+    fn load_vits(&self, tts: &TtsArgs) -> Result<Vits> {
+        if let Some(n) = self.threads {
+            std::env::set_var("RAYON_NUM_THREADS", n.to_string());
+        }
+        let device = self.device()?;
+        let dtype = tts.dtype(&device)?;
+        let t0 = Instant::now();
+        let v = Vits::load(&self.model, &device, dtype)?;
+        tracing::info!("loaded {} on {device:?} ({dtype:?}) in {:.2?}", v.name(), t0.elapsed());
+        Ok(v)
+    }
+}
+
+#[derive(Args, Clone)]
+struct TtsArgs {
+    /// Compute type: auto (f16 on CUDA, f32 elsewhere), f32 or f16.
+    #[arg(long, default_value = "auto")]
+    dtype: String,
+    /// Prior noise (expressiveness); model default when absent.
+    #[arg(long)]
+    noise_scale: Option<f32>,
+    /// Duration noise (rhythm variation); model default when absent.
+    #[arg(long)]
+    noise_scale_duration: Option<f32>,
+    /// > 1 speaks faster.
+    #[arg(long)]
+    speaking_rate: Option<f32>,
+    /// Silence between sentences, in milliseconds.
+    #[arg(long, default_value_t = 250)]
+    pause_ms: u32,
+    /// Seed for reproducible audio.
+    #[arg(long)]
+    seed: Option<u64>,
+}
+
+impl TtsArgs {
+    fn dtype(&self, device: &Device) -> Result<malaga_core::vits::DType> {
+        Ok(match self.dtype.as_str() {
+            "auto" if device.is_cuda() => malaga_core::vits::DType::F16,
+            "auto" => malaga_core::vits::DType::F32,
+            "f32" => malaga_core::vits::DType::F32,
+            "f16" => malaga_core::vits::DType::F16,
+            d => anyhow::bail!("unknown dtype '{d}' (auto, f32, f16)"),
+        })
+    }
+
+    fn options(&self, v: &Vits) -> SynthOptions {
+        let mut o = SynthOptions::from_config(&v.cfg);
+        o.noise_scale = self.noise_scale.unwrap_or(o.noise_scale);
+        o.noise_scale_duration = self.noise_scale_duration.unwrap_or(o.noise_scale_duration);
+        o.speaking_rate = self.speaking_rate.unwrap_or(o.speaking_rate);
+        o.sentence_pause_ms = self.pause_ms;
+        o.seed = self.seed;
+        o
     }
 }
 
@@ -184,8 +263,25 @@ fn main() -> Result<()> {
     match Cli::parse().cmd {
         Cmd::Convert { hf, out, preset, name, shortlist, shortlist_min_count } => {
             let t0 = Instant::now();
-            let opts = ConvertOptions { preset, model_name: name, shortlists: shortlist, shortlist_min_count };
-            convert(&hf, &out, &opts)?;
+            if hf_model_type(&hf)? == "vits" {
+                let name = match name {
+                    Some(n) => n,
+                    None => {
+                        let tc: serde_json::Value =
+                            serde_json::from_str(&std::fs::read_to_string(hf.join("tokenizer_config.json"))?)?;
+                        format!("facebook/mms-tts-{}", tc.get("language").and_then(|v| v.as_str()).unwrap_or("x"))
+                    }
+                };
+                convert_vits(&hf, &out, preset.unwrap_or(Preset::F16), &name)?;
+            } else {
+                let opts = ConvertOptions {
+                    preset: preset.unwrap_or(Preset::Q8_0),
+                    model_name: name.unwrap_or_else(|| "facebook/nllb-200-distilled-600M".into()),
+                    shortlists: shortlist,
+                    shortlist_min_count,
+                };
+                convert(&hf, &out, &opts)?;
+            }
             tracing::info!("done in {:.1?}", t0.elapsed());
         }
         Cmd::Translate { model, gen, from, to, lines, text } => {
@@ -209,8 +305,49 @@ fn main() -> Result<()> {
             }
             tracing::info!("translated in {:.2?}", t0.elapsed());
         }
+        Cmd::Speak { model, tts, out, iters, text } => {
+            let v = model.load_vits(&tts)?;
+            let text = match text {
+                Some(t) => t,
+                None => {
+                    let mut s = String::new();
+                    std::io::stdin().read_to_string(&mut s)?;
+                    s
+                }
+            };
+            let opts = tts.options(&v);
+            let mut times = vec![];
+            let mut wav = vec![];
+            for _ in 0..iters.max(1) {
+                let t0 = Instant::now();
+                wav = v.synthesize(&text, &opts)?;
+                times.push(t0.elapsed().as_secs_f64());
+            }
+            let secs = wav.len() as f64 / v.sample_rate() as f64;
+            let first = times[0];
+            let best = times.iter().cloned().fold(f64::INFINITY, f64::min);
+            tracing::info!(
+                "{secs:.2}s of audio: first {:.0} ms, best {:.0} ms (RTF {:.4}, {:.0}x real time)",
+                first * 1e3,
+                best * 1e3,
+                best / secs,
+                secs / best
+            );
+            std::fs::write(&out, wav_bytes(&wav, v.sample_rate()))?;
+            tracing::info!("wrote {}", out.display());
+        }
         Cmd::Bench { model, gen, iters, batch } => bench(&model.load()?, &gen.options(), iters, batch)?,
-        Cmd::Serve { model, gen, model_id, host, port, default_source, default_target } => {
+        Cmd::Serve { model, tts, model_id, host, port, .. } if gguf_architecture(&model.model)? == VITS_ARCH => {
+            let v = model.load_vits(&tts)?;
+            // Warm up (CUDA JIT, cuBLAS handles) before /health turns green.
+            let t0 = Instant::now();
+            let defaults = tts.options(&v);
+            v.synthesize("Manao ahoana.", &defaults)?;
+            tracing::info!("warm-up done in {:.2?}", t0.elapsed());
+            let cfg = tts_server::TtsServerConfig { addr: format!("{host}:{port}"), model_id, defaults };
+            tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(tts_server::run(v, cfg))?;
+        }
+        Cmd::Serve { model, gen, model_id, host, port, default_source, default_target, .. } => {
             let translator = model.load()?;
             // Warm up (CUDA module JIT, graph capture for the common shape) before
             // the port opens, so that a readiness probe on /health covers it.

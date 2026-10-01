@@ -21,10 +21,13 @@ pub mod segment;
 #[doc(hidden)]
 pub mod testutil;
 pub mod translator;
+pub mod vits;
+pub mod vits_convert;
 
 pub use candle_core::Device;
 pub use config::Config;
 pub use translator::{GenOptions, Translator};
+pub use vits::{SynthOptions, Vits};
 
 /// Picks the best available device: CUDA, then Metal, then CPU.
 pub fn best_device(ordinal: usize) -> anyhow::Result<Device> {
