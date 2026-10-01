@@ -19,6 +19,44 @@ malaga serve  -m models/gguf/mms-tts-mlg-f16.gguf --port 8080   # POST /v1/audio
 → `audio/wav` 16 bits mono. `voice` est accepté et ignoré. Réglages en plus : `noise_scale`,
 `noise_scale_duration`, `seed` (audio reproductible, identique CPU/GPU).
 
+## Normalisation du texte malgache (`mg_norm.rs`)
+
+MMS ne lit que 30 caractères (lettres malgaches et espace) : tout le reste était supprimé en
+silence. Avant la synthèse, le texte est donc réécrit tel qu'on le prononce, en orthographe
+malgache. `malaga speak --print-text` affiche le résultat ; `POST /v1/audio/normalize` aussi.
+
+| Écrit | Lu |
+|---|---|
+| `2024` | efatra amby roapolo sy roa arivo (unités d'abord, `amby` puis `sy`, `iraika` devant `amby`) |
+| `12,5%` | roa ambin'ny folo faingo dimy isan-jato |
+| `3 500 000 Ar` | dimy hetsy amby telo tapitrisa ariary |
+| `28°C`, `45 km/h` | valo amby roapolo degre selsiosy, dimy amby efapolo kilometatra isan'ora |
+| `14h30`, `26/06/1960` | efatra ambin'ny folo ora sy telopolo minitra ; enina amby roapolo jona … |
+| `faha-3`, `21e` | fahatelo, fahiraika amby roapolo |
+| `034 12 345 67` | groupe par groupe, avec une pause entre chaque |
+| `SMS`, `4G`, `S24` | esy ema esy ; efatra je ; esy efatra amby roapolo |
+| `info@malaga.mg` | infô arobasy malaga teboka ema je |
+| `iPhone`, `Android`, `WiFi` | aifaona, andrôida, oaifay (lexique) |
+| `Paris`, `Macron`, `santé` | parisy, makrôna, sante (règles) |
+| `( ) : ; —` | pause courte (120 ms) |
+
+Mots étrangers : d'abord le lexique (une centaine d'entrées, `--lexicon fichier.tsv` pour en ajouter
+ou corriger, une ligne `mot<TAB>prononciation`), puis des règles de réécriture pour tout mot qui ne
+peut pas être malgache (lettres c q u w x, consonne finale hors élision `amin'ny` / `isan-jato`,
+groupe de consonnes absent du malgache). Les règles visent le français et l'anglais (`ou` → o,
+`o` → ô, `ch` → s, `c` → s/k, finale consonantique + y/a…) : approximatives par nature, le lexique
+prime. Les noms étrangers à l'orthographe d'apparence malgache (Tokyo, Toronto) ne sont détectables
+que par le lexique. Les sigles de 2–3 lettres ou sans voyelle sont épelés ; JIRAMA est lu comme un mot.
+
+## Fins de mots « hachées »
+
+Le signal ne s'arrête pas brutalement (énergie des 20 dernières ms ≈ 1 % du corps) : ce sont les
+voyelles qui sont avalées. Même sans bruit, MMS donne ≤ 32 ms à 40 % des voyelles (lecture rapide
+de la Bible), et surtout aux voyelles atones finales ; le bruit de durée n'y change presque rien.
+Correction : plancher de durée par voyelle, 45 ms (`--vowel-floor-ms`) et 65 ms en fin de mot
+(`--final-vowel-floor-ms`). Voyelles ≤ 32 ms : 32 % → 0 %, audio +15 % plus long, vitesse inchangée.
+`0` rend les durées du modèle telles quelles.
+
 ## Ce que fait la conversion (`vits_convert.rs`)
 
 | Optimisation | Effet |
@@ -67,8 +105,8 @@ temps par étape.
 
 ## Pistes
 
-- **Nombres** : les chiffres sont supprimés. Il faudrait les écrire en malgache (`21` → « iraika amby
-  roapolo ») avant la synthèse.
+- **Lexique** : à enrichir à l'usage (noms propres, marques) ; les règles ne remplacent pas une
+  vraie phonétisation G2P du français et de l'anglais.
 - **CPU** : 4× plus lent que PyTorch, car le conv1d CPU de candle (im2col + gemm) est faible face à
   oneDNN. Il faudrait un conv direct ou la feature `mkl` pour un hébergement sans GPU.
 - **GPU** : cuDNN (feature `cudnn`, non installé ici) ou un noyau fusionné leaky-ReLU + conv dilaté

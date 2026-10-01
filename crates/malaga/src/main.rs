@@ -73,6 +73,9 @@ enum Cmd {
         /// Synthesize this many times and report latency / real-time factor.
         #[arg(long, default_value_t = 1)]
         iters: usize,
+        /// Print the normalized text the model reads.
+        #[arg(long)]
+        print_text: bool,
         /// Text to speak (reads stdin when absent).
         text: Option<String>,
     },
@@ -159,7 +162,11 @@ impl ModelArgs {
         let device = self.device()?;
         let dtype = tts.dtype(&device)?;
         let t0 = Instant::now();
-        let v = Vits::load(&self.model, &device, dtype)?;
+        let mut v = Vits::load(&self.model, &device, dtype)?;
+        if let Some(path) = &tts.lexicon {
+            let n = v.load_lexicon(path)?;
+            tracing::info!("lexicon {}: {n} entries", path.display());
+        }
         tracing::info!("loaded {} on {device:?} ({dtype:?}) in {:.2?}", v.name(), t0.elapsed());
         Ok(v)
     }
@@ -182,6 +189,21 @@ struct TtsArgs {
     /// Silence between sentences, in milliseconds.
     #[arg(long, default_value_t = 250)]
     pause_ms: u32,
+    /// Silence at commas, brackets, colons, in milliseconds.
+    #[arg(long, default_value_t = 120)]
+    phrase_pause_ms: u32,
+    /// Minimum vowel length in ms (0 = model durations as is).
+    #[arg(long, default_value_t = 45)]
+    vowel_floor_ms: u32,
+    /// Minimum word-final vowel length in ms.
+    #[arg(long, default_value_t = 65)]
+    final_vowel_floor_ms: u32,
+    /// Read the text as is (no number / unit / symbol / foreign-word normalization).
+    #[arg(long)]
+    no_normalize: bool,
+    /// Extra pronunciations, one `word<TAB>respelling` per line; override the built-in lexicon.
+    #[arg(long, env = "MALAGA_LEXICON")]
+    lexicon: Option<PathBuf>,
     /// Seed for reproducible audio.
     #[arg(long)]
     seed: Option<u64>,
@@ -204,6 +226,10 @@ impl TtsArgs {
         o.noise_scale_duration = self.noise_scale_duration.unwrap_or(o.noise_scale_duration);
         o.speaking_rate = self.speaking_rate.unwrap_or(o.speaking_rate);
         o.sentence_pause_ms = self.pause_ms;
+        o.phrase_pause_ms = self.phrase_pause_ms;
+        o.vowel_floor_ms = self.vowel_floor_ms;
+        o.final_vowel_floor_ms = self.final_vowel_floor_ms;
+        o.normalize = !self.no_normalize;
         o.seed = self.seed;
         o
     }
@@ -305,7 +331,7 @@ fn main() -> Result<()> {
             }
             tracing::info!("translated in {:.2?}", t0.elapsed());
         }
-        Cmd::Speak { model, tts, out, iters, text } => {
+        Cmd::Speak { model, tts, out, iters, print_text, text } => {
             let v = model.load_vits(&tts)?;
             let text = match text {
                 Some(t) => t,
@@ -316,6 +342,9 @@ fn main() -> Result<()> {
                 }
             };
             let opts = tts.options(&v);
+            if print_text {
+                println!("{}", v.spoken_text(&text, &opts));
+            }
             let mut times = vec![];
             let mut wav = vec![];
             for _ in 0..iters.max(1) {

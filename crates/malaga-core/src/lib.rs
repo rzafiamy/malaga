@@ -16,6 +16,7 @@ mod graph;
 #[cfg(feature = "cuda")]
 mod kernels;
 pub mod langs;
+pub mod mg_norm;
 pub mod model;
 pub mod segment;
 #[doc(hidden)]

@@ -23,6 +23,7 @@ serde_json.workspace = true
 tracing.workspace = true
 half = "2"
 unicode-normalization = "0.1"
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"

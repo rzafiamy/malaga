@@ -4,6 +4,9 @@
 //!   → `audio/wav` (16-bit mono) or raw `pcm` (s16le). `voice` is accepted and
 //!   ignored (single-speaker model). Extra knobs: `noise_scale`,
 //!   `noise_scale_duration`, `seed`.
+//! * `POST /v1/audio/normalize`  `{input}` → `{text}`: what the model will read
+//!   (numbers, units, symbols, foreign words spelled out). `normalize: false`
+//!   on /v1/audio/speech reads the input as is.
 //! * `GET /health`, `GET /v1/models`
 //!
 //! One inference thread owns the model; requests are served in arrival order.
@@ -28,10 +31,9 @@ pub struct TtsServerConfig {
     pub defaults: SynthOptions,
 }
 
-struct Job {
-    text: String,
-    opts: SynthOptions,
-    reply: oneshot::Sender<Result<Vec<f32>, String>>,
+enum Job {
+    Speak { text: String, opts: SynthOptions, reply: oneshot::Sender<Result<Vec<f32>, String>> },
+    Normalize { text: String, opts: SynthOptions, reply: oneshot::Sender<String> },
 }
 
 #[derive(Clone)]
@@ -55,6 +57,28 @@ struct SpeechRequest {
     noise_scale_duration: Option<f32>,
     #[serde(default)]
     seed: Option<u64>,
+    #[serde(default)]
+    normalize: Option<bool>,
+}
+
+#[derive(Deserialize)]
+struct NormalizeRequest {
+    input: String,
+}
+
+async fn normalize(State(s): State<AppState>, body: axum::body::Bytes) -> Response {
+    let req: NormalizeRequest = match serde_json::from_slice(&body) {
+        Ok(r) => r,
+        Err(e) => return error(StatusCode::BAD_REQUEST, format!("invalid JSON: {e}")),
+    };
+    let (reply, rx) = oneshot::channel();
+    if s.jobs.send(Job::Normalize { text: req.input, opts: s.defaults.clone(), reply }).is_err() {
+        return error(StatusCode::INTERNAL_SERVER_ERROR, "inference thread stopped");
+    }
+    match rx.await {
+        Ok(text) => Json(json!({ "text": text })).into_response(),
+        Err(_) => error(StatusCode::INTERNAL_SERVER_ERROR, "inference thread stopped"),
+    }
 }
 
 fn error(status: StatusCode, msg: impl Into<String>) -> Response {
@@ -83,9 +107,10 @@ async fn speech(State(s): State<AppState>, body: axum::body::Bytes) -> Response 
     opts.noise_scale = req.noise_scale.unwrap_or(opts.noise_scale);
     opts.noise_scale_duration = req.noise_scale_duration.unwrap_or(opts.noise_scale_duration);
     opts.seed = req.seed.or(opts.seed);
+    opts.normalize = req.normalize.unwrap_or(opts.normalize);
 
     let (reply, rx) = oneshot::channel();
-    if s.jobs.send(Job { text: req.input, opts, reply }).is_err() {
+    if s.jobs.send(Job::Speak { text: req.input, opts, reply }).is_err() {
         return error(StatusCode::INTERNAL_SERVER_ERROR, "inference thread stopped");
     }
     let samples = match rx.await {
@@ -108,13 +133,20 @@ async fn speech(State(s): State<AppState>, body: axum::body::Bytes) -> Response 
 
 fn worker(v: Vits, rx: mpsc::Receiver<Job>) {
     while let Ok(job) = rx.recv() {
-        let t0 = std::time::Instant::now();
-        let out = v.synthesize(&job.text, &job.opts).map_err(|e| format!("{e:#}"));
-        if let Ok(w) = &out {
-            let secs = w.len() as f64 / v.sample_rate() as f64;
-            tracing::info!("{} chars -> {secs:.2}s audio in {:.0?}", job.text.chars().count(), t0.elapsed());
+        match job {
+            Job::Speak { text, opts, reply } => {
+                let t0 = std::time::Instant::now();
+                let out = v.synthesize(&text, &opts).map_err(|e| format!("{e:#}"));
+                if let Ok(w) = &out {
+                    let secs = w.len() as f64 / v.sample_rate() as f64;
+                    tracing::info!("{} chars -> {secs:.2}s audio in {:.0?}", text.chars().count(), t0.elapsed());
+                }
+                let _ = reply.send(out);
+            }
+            Job::Normalize { text, opts, reply } => {
+                let _ = reply.send(v.spoken_text(&text, &opts));
+            }
         }
-        let _ = job.reply.send(out);
     }
 }
 
@@ -137,6 +169,7 @@ pub fn router(v: Vits, cfg: &TtsServerConfig) -> Result<Router> {
             }),
         )
         .route("/v1/audio/speech", post(speech))
+        .route("/v1/audio/normalize", post(normalize))
         .with_state(state))
 }
 

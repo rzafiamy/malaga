@@ -99,6 +99,21 @@ pub struct CharTokenizer {
 }
 
 impl CharTokenizer {
+    /// Whether position `i` of an encoded sequence holds a character (not a blank).
+    fn is_char(&self, i: usize) -> bool {
+        !self.add_blank || i % 2 == 1
+    }
+
+    fn is_vowel_id(&self, id: u32) -> bool {
+        self.vocab.iter().any(|(c, &v)| v == id && matches!(c, 'a' | 'e' | 'i' | 'o' | 'y' | 'à' | 'ì' | 'ò' | 'ô' | 'ỳ'))
+    }
+
+    fn space_id(&self) -> Option<u32> {
+        self.vocab.get(&' ').copied()
+    }
+}
+
+impl CharTokenizer {
     pub fn new(tokens: &[String], add_blank: bool) -> Result<Self> {
         let mut vocab = HashMap::new();
         for (id, t) in tokens.iter().enumerate() {
@@ -165,6 +180,16 @@ pub struct SynthOptions {
     pub speaking_rate: f32,
     /// Silence inserted between sentences.
     pub sentence_pause_ms: u32,
+    /// Silence at commas, brackets, colons… (the model never saw punctuation).
+    pub phrase_pause_ms: u32,
+    /// Minimum vowel length. MMS swallows ~40 % of vowels (≤ 32 ms), which
+    /// sounds choppy; flooring them keeps every syllable audible.
+    pub vowel_floor_ms: u32,
+    /// Minimum length of a word-final vowel (Malagasy words end in weak vowels
+    /// that the model clips most).
+    pub final_vowel_floor_ms: u32,
+    /// Malagasy text normalization (numbers, units, symbols, foreign words).
+    pub normalize: bool,
     /// Fixed seed for reproducible output; random otherwise.
     pub seed: Option<u64>,
 }
@@ -176,6 +201,10 @@ impl SynthOptions {
             noise_scale_duration: cfg.noise_scale_duration,
             speaking_rate: cfg.speaking_rate,
             sentence_pause_ms: 250,
+            phrase_pause_ms: 120,
+            vowel_floor_ms: 45,
+            final_vowel_floor_ms: 65,
+            normalize: true,
             seed: None,
         }
     }
@@ -656,6 +685,8 @@ pub struct Vits {
     dp: DurationPredictor,
     flows: Vec<Coupling>,
     dec: HifiGan,
+    /// Malagasy front-end (only for Malagasy checkpoints).
+    norm: Option<crate::mg_norm::MgNormalizer>,
 }
 
 /// Small deterministic normal sampler (xorshift64* + Box-Muller), so a seed
@@ -706,6 +737,8 @@ impl Vits {
             .collect::<std::result::Result<_, _>>()?;
         let add_blank = get(ct, "vits.add_blank")?.to_bool()?;
         let tokenizer = CharTokenizer::new(&tokens, add_blank)?;
+        let language = ct.metadata.get("vits.language").and_then(|v| v.to_string().ok().cloned()).unwrap_or_default();
+        let norm = matches!(language.as_str(), "mlg" | "plt" | "mg").then(crate::mg_norm::MgNormalizer::default);
         let name = ct.metadata.get("general.name").and_then(|v| v.to_string().ok().cloned()).unwrap_or_default();
 
         let mut w = Loader { ct, file: std::fs::File::open(path)?, device: device.clone(), dtype };
@@ -773,7 +806,7 @@ impl Vits {
             conv_post: w.conv("dec.conv_post", 3, 1)?,
             slope: cfg.leaky_relu_slope,
         };
-        Ok(Self { cfg, tokenizer, name, device: device.clone(), dtype, enc, dp, flows, dec })
+        Ok(Self { cfg, tokenizer, name, device: device.clone(), dtype, enc, dp, flows, dec, norm })
     }
 
     pub fn name(&self) -> &str {
@@ -792,24 +825,70 @@ impl Vits {
         &self.device
     }
 
-    /// Synthesizes a document: one VITS pass per sentence, joined with
-    /// `sentence_pause_ms` of silence. Returns mono f32 samples in [-1, 1].
+    /// Adds user lexicon entries (`word<TAB>respelling`) to the Malagasy front-end.
+    pub fn load_lexicon(&mut self, path: &Path) -> Result<usize> {
+        match &mut self.norm {
+            Some(n) => n.load_lexicon(path),
+            None => bail!("this model has no Malagasy text front-end"),
+        }
+    }
+
+    /// The text the model will read, after normalization (for debugging).
+    pub fn spoken_text(&self, text: &str, opts: &SynthOptions) -> String {
+        match (&self.norm, opts.normalize) {
+            (Some(n), true) => n.normalize(text),
+            _ => text.to_string(),
+        }
+    }
+
+    /// Synthesizes a document: text normalization, then one VITS pass per
+    /// phrase (sentences split at `,`), joined with real silences. Returns mono
+    /// f32 samples in [-1, 1].
     pub fn synthesize(&self, text: &str, opts: &SynthOptions) -> Result<Vec<f32>> {
         let mut rng = Normal::new(opts.seed);
-        let pause = vec![0f32; (self.cfg.sampling_rate as u64 * opts.sentence_pause_ms as u64 / 1000) as usize];
+        let silence = |ms: u32| vec![0f32; (self.cfg.sampling_rate as u64 * ms as u64 / 1000) as usize];
+        let (sentence_pause, phrase_pause) = (silence(opts.sentence_pause_ms), silence(opts.phrase_pause_ms));
+        let text = self.spoken_text(text, opts);
         let mut out = vec![];
-        for seg in crate::segment::segment(text) {
-            let crate::segment::Segment::Text(s) = seg else { continue };
-            let ids = self.tokenizer.encode(s);
-            if ids.len() <= 1 {
-                continue; // nothing pronounceable (punctuation, digits only)
+        for seg in crate::segment::segment(&text) {
+            let crate::segment::Segment::Text(sentence) = seg else { continue };
+            let mut new_sentence = true;
+            for phrase in sentence.split(',') {
+                let ids = self.tokenizer.encode(phrase);
+                if ids.len() <= 1 {
+                    continue; // nothing pronounceable
+                }
+                if !out.is_empty() {
+                    out.extend_from_slice(if new_sentence { &sentence_pause } else { &phrase_pause });
+                }
+                new_sentence = false;
+                out.extend(self.synthesize_ids(&ids, opts, &mut rng)?);
             }
-            if !out.is_empty() {
-                out.extend_from_slice(&pause);
-            }
-            out.extend(self.synthesize_ids(&ids, opts, &mut rng)?);
         }
         Ok(out)
+    }
+
+    /// Frames per token: ceil(exp(log_dur) / rate), with the vowel floors.
+    fn durations(&self, ids: &[u32], log_dur: &[f32], opts: &SynthOptions) -> Vec<usize> {
+        let length_scale = 1.0 / opts.speaking_rate.max(0.05);
+        let frame_ms = self.cfg.hop() as f32 * 1000.0 / self.cfg.sampling_rate as f32;
+        let floor = |ms: u32| (ms as f32 / frame_ms).round() as usize;
+        let (vf, ff) = (floor(opts.vowel_floor_ms), floor(opts.final_vowel_floor_ms));
+        let step = if self.tokenizer.add_blank { 2 } else { 1 };
+        let space = self.tokenizer.space_id();
+        log_dur
+            .iter()
+            .enumerate()
+            .map(|(i, ld)| {
+                let d = (ld.exp() * length_scale).ceil().max(0.0) as usize;
+                if !self.tokenizer.is_char(i) || !self.tokenizer.is_vowel_id(ids[i]) {
+                    return d;
+                }
+                let next = ids.get(i + step).copied();
+                let word_final = next.is_none() || next == space;
+                d.max(if word_final { ff } else { vf })
+            })
+            .collect()
     }
 
     fn synthesize_ids(&self, ids: &[u32], opts: &SynthOptions, rng: &mut Normal) -> Result<Vec<f32>> {
@@ -826,11 +905,9 @@ impl Vits {
         let log_dur = self.dp.forward(&hidden, noise, cfg)?;
         stage(&self.device, "duration", &mut t0);
         dump("log_dur", &Tensor::new(log_dur.as_slice(), &Device::Cpu)?);
-        let length_scale = 1.0 / opts.speaking_rate.max(0.05);
         // Length regulator: frame -> token index.
         let mut index = vec![];
-        for (i, ld) in log_dur.iter().enumerate() {
-            let d = (ld.exp() * length_scale).ceil().max(0.0) as usize;
+        for (i, d) in self.durations(ids, &log_dur, opts).into_iter().enumerate() {
             index.extend(std::iter::repeat_n(i as u32, d));
         }
         if index.is_empty() {
