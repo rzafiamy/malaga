@@ -1,0 +1,29 @@
+[package]
+name = "malaga"
+description = "FR/EN -> Malagasy translator: GGUF converter, CLI and HTTP server for Meta's NLLB-200"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+cuda = ["malaga-core/cuda"]
+cudnn = ["malaga-core/cudnn"]
+metal = ["malaga-core/metal"]
+mkl = ["malaga-core/mkl"]
+
+[dependencies]
+malaga-core = { path = "../malaga-core" }
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive", "env"] }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "signal"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

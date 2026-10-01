@@ -1,0 +1,27 @@
+[package]
+name = "malaga-core"
+description = "NLLB (M2M100) encoder-decoder inference on quantized GGUF weights, focused on FR/EN -> Malagasy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+cuda = ["candle-core/cuda", "candle-nn/cuda"]
+cudnn = ["cuda", "candle-core/cudnn"]
+metal = ["candle-core/metal", "candle-nn/metal"]
+mkl = ["candle-core/mkl", "candle-nn/mkl"]
+
+[dependencies]
+anyhow.workspace = true
+candle-core.workspace = true
+candle-nn.workspace = true
+tokenizers.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+half = "2"
+
+[dev-dependencies]
+tempfile = "3"

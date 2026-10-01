@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="170" viewBox="0 0 900 170" font-family="sans-serif" font-size="13">
+  <style>.b{fill:#eef4ff;stroke:#3b6fd8;stroke-width:1.5;rx:8}.t{fill:#1b2b4b}.s{fill:#5a6b8a;font-size:11px}.a{stroke:#3b6fd8;stroke-width:1.5;marker-end:url(#m)}</style>
+  <defs><marker id="m" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#3b6fd8"/></marker></defs>
+  <rect class="b" x="10" y="45" width="150" height="70"/><text class="t" x="85" y="75" text-anchor="middle">Hugging Face</text><text class="s" x="85" y="95" text-anchor="middle">NLLB-200 (Meta)</text>
+  <line class="a" x1="160" y1="80" x2="200" y2="80"/>
+  <rect class="b" x="200" y="45" width="150" height="70"/><text class="t" x="275" y="75" text-anchor="middle">malaga convert</text><text class="s" x="275" y="95" text-anchor="middle">fusion QKV, quantif.</text>
+  <line class="a" x1="350" y1="80" x2="390" y2="80"/>
+  <rect class="b" x="390" y="45" width="130" height="70"/><text class="t" x="455" y="75" text-anchor="middle">model.gguf</text><text class="s" x="455" y="95" text-anchor="middle">poids + tokenizer</text>
+  <line class="a" x1="520" y1="80" x2="560" y2="80"/>
+  <rect class="b" x="560" y="30" width="170" height="100"/><text class="t" x="645" y="62" text-anchor="middle">malaga serve</text><text class="s" x="645" y="82" text-anchor="middle">noyaux CUDA fusionnés</text><text class="s" x="645" y="100" text-anchor="middle">CUDA Graphs · KV f16</text>
+  <line class="a" x1="730" y1="80" x2="770" y2="80"/>
+  <rect class="b" x="770" y="45" width="120" height="70"/><text class="t" x="830" y="75" text-anchor="middle">zallama</text><text class="s" x="830" y="95" text-anchor="middle">OpenAI / Ollama</text>
+</svg>

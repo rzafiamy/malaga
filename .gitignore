@@ -1,0 +1,28 @@
+/target
+/models
+*.gguf
+*.bin
+*.safetensors
+/build
+/target
+# secrets
+.env
+.env.*
+*.pem
+*.key
+*.p12
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# paquets
+*.app
+*.deb
+*.AppImage
+*.dmg
+*.msi
+# logs / temporaires
+*.log
+tmp/
+.cache/

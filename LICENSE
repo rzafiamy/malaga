@@ -1,0 +1,9 @@
+malaga est distribué sous double licence, au choix :
+
+  * MIT License        — voir LICENSE-MIT
+  * Apache License 2.0 — voir LICENSE-APACHE
+
+SPDX-License-Identifier: MIT OR Apache-2.0
+
+Les modèles NLLB-200 de Meta convertis par malaga restent soumis à leur propre licence,
+CC-BY-NC 4.0 (usage non commercial) : https://creativecommons.org/licenses/by-nc/4.0/

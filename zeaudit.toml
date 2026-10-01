@@ -1,0 +1,34 @@
+# Audit Ze-Apps de malaga (zeaudit audit .)
+
+[identity]
+owner = "Rija Z"
+app_type = "CLI Rust + serveur HTTP (pas d'interface graphique)"
+repo_url = "https://github.com/rzafiamy/malaga"
+
+[[waive]]
+id = "ARB-15"
+reason = "Pas d'application Tauri : malaga est une CLI et un serveur HTTP, sans interface graphique"
+
+[[waive]]
+id = "ARB-16"
+reason = "Pas d'application Tauri : aucune dépendance tauri attendue"
+
+[[waive]]
+id = "CRD-04"
+reason = "Aucune bibliothèque Tauri utilisée (indiqué dans CREDITS.md)"
+
+[[waive]]
+id = "PRQ-05"
+reason = "Pas de webview : les dépendances système Tauri (webkit2gtk, appindicator, librsvg) ne sont pas requises"
+
+[[waive]]
+id = "PRQ-07"
+reason = "Pas de Tauri CLI : le binaire se construit avec cargo seul (build.sh)"
+
+[[waive]]
+id = "PRT-04"
+reason = "Outil en ligne de commande sans interface : le portfolio montre des sorties console et un schéma (pipeline.svg) plutôt que des captures d'écran"
+
+[[waive]]
+id = "QUA-05"
+reason = "Tauri n'est pas utilisé ; seule la version de Rust est pertinente (rust-toolchain.toml)"

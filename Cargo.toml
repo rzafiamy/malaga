@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = ["crates/malaga-core", "crates/malaga"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/rzafiamy/malaga"
+rust-version = "1.82"
+
+[workspace.dependencies]
+anyhow = "1"
+candle-core = "0.11"
+candle-nn = "0.11"
+tokenizers = { version = "0.22", default-features = false, features = ["onig", "esaxx_fast"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
