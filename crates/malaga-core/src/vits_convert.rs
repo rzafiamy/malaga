@@ -86,7 +86,12 @@ pub fn convert_vits(hf_dir: &Path, out: &Path, preset: Preset, model_name: &str)
     for (t, &id) in &vocab {
         *tokens.get_mut(id as usize).context("non-contiguous vocab ids")? = t.clone();
     }
-    anyhow::ensure!(tokens.len() == cfg.vocab_size, "vocab.json has {} entries, config {}", tokens.len(), cfg.vocab_size);
+    anyhow::ensure!(
+        tokens.len() == cfg.vocab_size,
+        "vocab.json has {} entries, config {}",
+        tokens.len(),
+        cfg.vocab_size
+    );
 
     let mut w = load_checkpoint(hf_dir)?;
     let total: usize = w.values().map(|t| t.elem_count()).sum();

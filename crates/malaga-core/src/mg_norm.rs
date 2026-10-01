@@ -29,8 +29,18 @@ const TENS: [&str; 10] =
 const HUNDREDS: [&str; 10] =
     ["", "zato", "roanjato", "telonjato", "efajato", "dimanjato", "eninjato", "fitonjato", "valonjato", "sivinjato"];
 const MONTHS: [&str; 12] = [
-    "janoary", "febroary", "martsa", "aprily", "mey", "jona", "jolay", "aogositra", "septambra", "oktobra",
-    "novambra", "desambra",
+    "janoary",
+    "febroary",
+    "martsa",
+    "aprily",
+    "mey",
+    "jona",
+    "jolay",
+    "aogositra",
+    "septambra",
+    "oktobra",
+    "novambra",
+    "desambra",
 ];
 
 /// Cardinal number in words.
@@ -318,7 +328,8 @@ fn is_mg_vowel(c: char) -> bool {
 }
 
 /// Consonant clusters that occur in native Malagasy words.
-const NATIVE_CLUSTERS: &[&str] = &["mb", "mp", "nd", "ndr", "nt", "ntr", "nts", "nj", "ng", "nk", "ts", "tr", "dr", "nz"];
+const NATIVE_CLUSTERS: &[&str] =
+    &["mb", "mp", "nd", "ndr", "nt", "ntr", "nts", "nj", "ng", "nk", "ts", "tr", "dr", "nz"];
 
 /// True when a (lowercase) word cannot be native Malagasy.
 pub fn looks_foreign(word: &str) -> bool {
@@ -544,7 +555,11 @@ impl MgNormalizer {
                 .enumerate()
                 .map(|(i, p)| {
                     let foreign = if i < last { looks_foreign(&format!("{p}-")) } else { looks_foreign(p) };
-                    if foreign { respell(p) } else { p.to_string() }
+                    if foreign {
+                        respell(p)
+                    } else {
+                        p.to_string()
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("-");
@@ -569,7 +584,11 @@ impl MgNormalizer {
             re.replace_all(s, |c: &Captures| {
                 let out = f(c);
                 // A refused match (e.g. 25:99 is not a time) is returned unchanged.
-                if out == c[0] { out } else { protect(out) }
+                if out == c[0] {
+                    out
+                } else {
+                    protect(out)
+                }
             })
             .into_owned()
         };
@@ -619,7 +638,10 @@ impl MgNormalizer {
             format!("{day} {} {}", MONTHS[m - 1], int_words(&c[3]))
         });
         // Digits only (no words yet): not protected, so units can still follow.
-        s = p.thousands.replace_all(&s, |c: &Captures| format!("{}{}", &c[1], c[2].replace([' ', '.'], ""))).into_owned();
+        s = p
+            .thousands
+            .replace_all(&s, |c: &Captures| format!("{}{}", &c[1], c[2].replace([' ', '.'], "")))
+            .into_owned();
         s = rep(&s, &p.time, &|c| {
             let (h, m): (u64, u64) = (c[1].parse().unwrap_or(0), c[2].parse().unwrap_or(0));
             if h > 24 || m > 59 {
@@ -727,7 +749,18 @@ mod tests {
 
     #[test]
     fn foreign_detection() {
-        for w in ["madagasikara", "antananarivo", "mpianatra", "fianarantsoa", "amin'ny", "isa-maraina", "isan-jato", "an-tanàna", "tsy", "ny"] {
+        for w in [
+            "madagasikara",
+            "antananarivo",
+            "mpianatra",
+            "fianarantsoa",
+            "amin'ny",
+            "isa-maraina",
+            "isan-jato",
+            "an-tanàna",
+            "tsy",
+            "ny",
+        ] {
             assert!(!looks_foreign(w), "{w}");
         }
         for w in ["iphone", "android", "google", "internet", "paris", "club", "michel"] {
@@ -743,14 +776,26 @@ mod tests {
     #[test]
     fn sentences() {
         let n = MgNormalizer::default();
-        assert_eq!(n.normalize("Nividy iPhone 15 sy Android aho."), "nividy aifaona dimy ambin'ny folo sy andrôida aho.");
+        assert_eq!(
+            n.normalize("Nividy iPhone 15 sy Android aho."),
+            "nividy aifaona dimy ambin'ny folo sy andrôida aho."
+        );
         assert_eq!(n.normalize("Lavitra 5 km (eo ho eo)."), "lavitra dimy kilometatra, eo ho eo.");
-        assert_eq!(n.normalize("Mitentina 2,5 kg sy 1 500 Ar"), "mitentina roa faingo dimy kilao sy dimanjato amby arivo ariary");
-        assert_eq!(n.normalize("Amin'ny 14h30 ny SMS"), "amin'ny efatra ambin'ny folo ora sy telopolo minitra ny esy ema esy");
+        assert_eq!(
+            n.normalize("Mitentina 2,5 kg sy 1 500 Ar"),
+            "mitentina roa faingo dimy kilao sy dimanjato amby arivo ariary"
+        );
+        assert_eq!(
+            n.normalize("Amin'ny 14h30 ny SMS"),
+            "amin'ny efatra ambin'ny folo ora sy telopolo minitra ny esy ema esy"
+        );
         assert_eq!(n.normalize("15% amin'ny mponina"), "dimy ambin'ny folo isan-jato amin'ny mponina");
         assert_eq!(n.normalize("Ny maripana dia 28°C"), "ny maripana dia valo amby roapolo degre selsiosy");
         assert_eq!(n.normalize("Galaxy S24"), "galaksy esy efatra amby roapolo");
         assert_eq!(n.normalize("info@malaga.mg"), "infô arobasy malaga teboka ema je");
-        assert_eq!(n.normalize("Antsoy ny 034 12 345 67"), "antsoy ny aotra telo efatra, roa ambin'ny folo, dimy amby efapolo sy telonjato, fito amby enimpolo");
+        assert_eq!(
+            n.normalize("Antsoy ny 034 12 345 67"),
+            "antsoy ny aotra telo efatra, roa ambin'ny folo, dimy amby efapolo sy telonjato, fito amby enimpolo"
+        );
     }
 }

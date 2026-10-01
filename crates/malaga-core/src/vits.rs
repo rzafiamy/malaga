@@ -18,7 +18,7 @@ use anyhow::{bail, Context, Result};
 use candle_core::quantized::gguf_file::{Content, Value};
 pub use candle_core::DType;
 use candle_core::{Device, Tensor};
-use candle_nn::ops::{leaky_relu, layer_norm, sigmoid, softmax_last_dim};
+use candle_nn::ops::{layer_norm, leaky_relu, sigmoid, softmax_last_dim};
 use serde::{Deserialize, Serialize};
 use unicode_normalization::UnicodeNormalization;
 
@@ -105,7 +105,9 @@ impl CharTokenizer {
     }
 
     fn is_vowel_id(&self, id: u32) -> bool {
-        self.vocab.iter().any(|(c, &v)| v == id && matches!(c, 'a' | 'e' | 'i' | 'o' | 'y' | 'à' | 'ì' | 'ò' | 'ô' | 'ỳ'))
+        self.vocab
+            .iter()
+            .any(|(c, &v)| v == id && matches!(c, 'a' | 'e' | 'i' | 'o' | 'y' | 'à' | 'ì' | 'ò' | 'ô' | 'ỳ'))
     }
 
     fn space_id(&self) -> Option<u32> {
@@ -489,7 +491,13 @@ impl DurationPredictor {
                     // [1, 3k-1, t] -> host [t][3k-1]
                     let p = f.proj.forward(&h)?.squeeze(0)?.t()?.to_dtype(DType::F32)?.to_vec2::<f32>()?;
                     for (v, p) in b.iter_mut().zip(&p) {
-                        *v = rq_spline_inverse(*v, &p[..bins], &p[bins..2 * bins], &p[2 * bins..], cfg.duration_predictor_tail_bound);
+                        *v = rq_spline_inverse(
+                            *v,
+                            &p[..bins],
+                            &p[bins..2 * bins],
+                            &p[2 * bins..],
+                            cfg.duration_predictor_tail_bound,
+                        );
                     }
                 }
             }
@@ -917,8 +925,12 @@ impl Vits {
         let index = Tensor::from_vec(index, frames, &self.device)?;
         let m = m.index_select(&index, 2)?;
         let logs = logs.index_select(&index, 2)?;
-        let eps = Tensor::from_vec(rng.vec(cfg.flow_size * frames, opts.noise_scale), (1, cfg.flow_size, frames), &self.device)?
-            .to_dtype(self.dtype)?;
+        let eps = Tensor::from_vec(
+            rng.vec(cfg.flow_size * frames, opts.noise_scale),
+            (1, cfg.flow_size, frames),
+            &self.device,
+        )?
+        .to_dtype(self.dtype)?;
         let mut z = (m + (eps * logs.exp()?)?)?;
 
         // Reverse coupling flows; torch.flip over channels before each.
@@ -978,7 +990,10 @@ mod tests {
     use super::*;
 
     fn tok() -> CharTokenizer {
-        let v = ["a", "|", "n", "i", "y", "o", "r", "t", "m", "e", "h", "s", "k", "f", "z", "d", "l", "'", "v", "p", "b", "j", "-", "g", "à", "ỳ", "ô", "ò", "ì", " "];
+        let v = [
+            "a", "|", "n", "i", "y", "o", "r", "t", "m", "e", "h", "s", "k", "f", "z", "d", "l", "'", "v", "p", "b",
+            "j", "-", "g", "à", "ỳ", "ô", "ò", "ì", " ",
+        ];
         CharTokenizer::new(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>(), true).unwrap()
     }
 
